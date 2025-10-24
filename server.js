@@ -27,7 +27,8 @@ app.get('/', (req, res) => {
 
 app.post('/api/aqi', async (req, res) => {
   try {
-    const { iqairKey, waqiToken } = req.body;
+    const iqairKey = req.body.iqairKey;
+    const waqiToken = req.body.waqiToken;
 
     if (cache.data && cache.timestamp && (Date.now() - cache.timestamp < cache.ttl)) {
       return res.json({
@@ -43,23 +44,18 @@ app.post('/api/aqi', async (req, res) => {
 
     if (iqairKey) {
       try {
-        let response = await fetch(
-          `https://api.airvisual.com/v2/nearest_city?lat=15.4909&lon=73.8278&key=${iqairKey}`
-        );
-        
+        let response = await fetch('https://api.airvisual.com/v2/nearest_city?lat=15.4909&lon=73.8278&key=' + iqairKey);
         let data = await response.json();
         
         if (!response.ok || data.status !== 'success') {
-          response = await fetch(
-            `https://api.airvisual.com/v2/city?city=Panaji&state=Goa&country=India&key=${iqairKey}`
-          );
+          response = await fetch('https://api.airvisual.com/v2/city?city=Panaji&state=Goa&country=India&key=' + iqairKey);
           data = await response.json();
         }
 
         if (response.ok && data.status === 'success' && data.data) {
           iqairData = {
             aqi: data.data.current.pollution.aqius,
-            pm25: data.data.current.pollution.p2.conc || 0,
+            pm25: data.data.current.pollution.p2 ? data.data.current.pollution.p2.conc : 0,
             timestamp: data.data.current.pollution.ts
           };
         } else {
@@ -73,16 +69,14 @@ app.post('/api/aqi', async (req, res) => {
 
     if (waqiToken) {
       try {
-        const response = await fetch(
-          `https://api.waqi.info/feed/goa/?token=${waqiToken}`
-        );
+        const response = await fetch('https://api.waqi.info/feed/goa/?token=' + waqiToken);
         const data = await response.json();
 
         if (response.ok && data.status === 'ok' && data.data) {
           waqiData = {
             aqi: data.data.aqi,
-            pm25: (data.data.iaqi && data.data.iaqi.pm25 && data.data.iaqi.pm25.v) || 0,
-            pm10: (data.data.iaqi && data.data.iaqi.pm10 && data.data.iaqi.pm10.v) || 0,
+            pm25: (data.data.iaqi && data.data.iaqi.pm25) ? data.data.iaqi.pm25.v : 0,
+            pm10: (data.data.iaqi && data.data.iaqi.pm10) ? data.data.iaqi.pm10.v : 0,
             timestamp: data.data.time.iso
           };
         } else {
@@ -94,9 +88,14 @@ app.post('/api/aqi', async (req, res) => {
     }
 
     if (iqairData || waqiData) {
-      const avgAqi = iqairData && waqiData 
-        ? Math.round((iqairData.aqi + waqiData.aqi) / 2)
-        : iqairData ? iqairData.aqi : waqiData.aqi;
+      let avgAqi;
+      if (iqairData && waqiData) {
+        avgAqi = Math.round((iqairData.aqi + waqiData.aqi) / 2);
+      } else if (iqairData) {
+        avgAqi = iqairData.aqi;
+      } else {
+        avgAqi = waqiData.aqi;
+      }
 
       const result = {
         location: 'Panaji, Goa',
@@ -127,4 +126,38 @@ app.post('/api/aqi', async (req, res) => {
       });
     }
   } catch (error) {
-    conso
+    console.error('Server error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/alert', async (req, res) => {
+  try {
+    const studentId = req.body.studentId;
+    const alertType = req.body.alertType;
+    const message = req.body.message;
+    const contact = req.body.contact;
+    
+    console.log('Alert triggered:', { studentId: studentId, alertType: alertType, message: message, contact: contact });
+    
+    res.json({
+      success: true,
+      message: 'Alert logged (integration pending)'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+const PORT = process.env.PORT || 3001;
+
+app.listen(PORT, function() {
+  console.log('Server running on port ' + PORT);
+});
