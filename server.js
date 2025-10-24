@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-// Enhanced CORS configuration - allow all origins for Claude.ai artifacts
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -12,14 +11,12 @@ app.use(cors({
 
 app.use(express.json());
 
-// In-memory cache to reduce API calls
 let cache = {
   data: null,
   timestamp: null,
-  ttl: 10 * 60 * 1000 // 10 minutes cache
+  ttl: 10 * 60 * 1000
 };
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -28,12 +25,10 @@ app.get('/', (req, res) => {
   });
 });
 
-// Fetch AQI data endpoint
 app.post('/api/aqi', async (req, res) => {
   try {
     const { iqairKey, waqiToken } = req.body;
 
-    // Check cache first
     if (cache.data && cache.timestamp && (Date.now() - cache.timestamp < cache.ttl)) {
       return res.json({
         success: true,
@@ -46,17 +41,14 @@ app.post('/api/aqi', async (req, res) => {
     let waqiData = null;
     let errors = [];
 
-    // Fetch from IQAir
     if (iqairKey) {
       try {
-        // Try nearest city first (more reliable)
         let response = await fetch(
           `https://api.airvisual.com/v2/nearest_city?lat=15.4909&lon=73.8278&key=${iqairKey}`
         );
         
         let data = await response.json();
         
-        // If nearest city fails, try specific city
         if (!response.ok || data.status !== 'success') {
           response = await fetch(
             `https://api.airvisual.com/v2/city?city=Panaji&state=Goa&country=India&key=${iqairKey}`
@@ -67,8 +59,72 @@ app.post('/api/aqi', async (req, res) => {
         if (response.ok && data.status === 'success' && data.data) {
           iqairData = {
             aqi: data.data.current.pollution.aqius,
-            pm25: data.data.current.pollution.p2?.conc || 0,
+            pm25: data.data.current.pollution.p2.conc || 0,
             timestamp: data.data.current.pollution.ts
           };
         } else {
-          errors.push(`IQAir: ${data.data?.message || data.me
+          const errorMsg = (data.data && data.data.message) || data.message || 'Failed to fetch';
+          errors.push('IQAir: ' + errorMsg);
+        }
+      } catch (error) {
+        errors.push('IQAir: ' + error.message);
+      }
+    }
+
+    if (waqiToken) {
+      try {
+        const response = await fetch(
+          `https://api.waqi.info/feed/goa/?token=${waqiToken}`
+        );
+        const data = await response.json();
+
+        if (response.ok && data.status === 'ok' && data.data) {
+          waqiData = {
+            aqi: data.data.aqi,
+            pm25: (data.data.iaqi && data.data.iaqi.pm25 && data.data.iaqi.pm25.v) || 0,
+            pm10: (data.data.iaqi && data.data.iaqi.pm10 && data.data.iaqi.pm10.v) || 0,
+            timestamp: data.data.time.iso
+          };
+        } else {
+          errors.push('WAQI: ' + (data.data || 'Failed to fetch'));
+        }
+      } catch (error) {
+        errors.push('WAQI: ' + error.message);
+      }
+    }
+
+    if (iqairData || waqiData) {
+      const avgAqi = iqairData && waqiData 
+        ? Math.round((iqairData.aqi + waqiData.aqi) / 2)
+        : iqairData ? iqairData.aqi : waqiData.aqi;
+
+      const result = {
+        location: 'Panaji, Goa',
+        aqi: avgAqi,
+        pm25: (iqairData && iqairData.pm25) || (waqiData && waqiData.pm25) || 0,
+        pm10: (waqiData && waqiData.pm10) || 0,
+        timestamp: new Date().toISOString(),
+        sources: {
+          iqair: iqairData ? iqairData.aqi : 'N/A',
+          cpcb: waqiData ? waqiData.aqi : 'N/A'
+        },
+        errors: errors.length > 0 ? errors : null
+      };
+
+      cache.data = result;
+      cache.timestamp = Date.now();
+
+      res.json({
+        success: true,
+        data: result,
+        cached: false
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to fetch data from any source',
+        details: errors
+      });
+    }
+  } catch (error) {
+    conso
