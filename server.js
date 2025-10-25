@@ -69,7 +69,7 @@ app.post('/api/aqi', async function(req, res) {
 
     if (waqiToken) {
       try {
-        const locations = ['panaji', 'margao', 'ponda', 'vasco-da-gama', 'mapusa', 'india/goa'];
+        const locations = ['delhi', 'panaji', 'margao', 'ponda', 'vasco-da-gama', 'mapusa', 'india/goa'];
         let waqiDataFound = false;
         
         for (let i = 0; i < locations.length; i++) {
@@ -192,4 +192,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, function() {
   console.log('Server running on port ' + PORT);
 });
+
 
