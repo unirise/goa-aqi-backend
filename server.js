@@ -17,7 +17,7 @@ let cache = {
   ttl: 10 * 60 * 1000
 };
 
-app.get('/', (req, res) => {
+app.get('/', function(req, res) {
   res.json({ 
     status: 'ok', 
     message: 'Goa AQI API Server Running',
@@ -25,7 +25,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.post('/api/aqi', async (req, res) => {
+app.post('/api/aqi', async function(req, res) {
   try {
     const iqairKey = req.body.iqairKey;
     const waqiToken = req.body.waqiToken;
@@ -69,24 +69,22 @@ app.post('/api/aqi', async (req, res) => {
 
     if (waqiToken) {
       try {
-        // Try multiple locations for Goa
-        const locations = ['panaji', 'margao', 'goa', 'india/goa/panaji'];
-        let waqiResponse = null;
+        const locations = ['panaji', 'margao', 'ponda', 'vasco-da-gama', 'mapusa', 'india/goa'];
         let waqiDataFound = false;
         
-        for (const loc of locations) {
+        for (let i = 0; i < locations.length; i++) {
           try {
-            waqiResponse = await fetch('https://api.waqi.info/feed/' + loc + '/?token=' + waqiToken);
-            const testData = await waqiResponse.json();
+            const response = await fetch('https://api.waqi.info/feed/' + locations[i] + '/?token=' + waqiToken);
+            const data = await response.json();
             
-            if (testData.status === 'ok' && testData.data && testData.data.aqi) {
-              waqiDataFound = true;
+            if (data.status === 'ok' && data.data && typeof data.data.aqi === 'number') {
               waqiData = {
-                aqi: testData.data.aqi,
-                pm25: (testData.data.iaqi && testData.data.iaqi.pm25) ? testData.data.iaqi.pm25.v : 0,
-                pm10: (testData.data.iaqi && testData.data.iaqi.pm10) ? testData.data.iaqi.pm10.v : 0,
-                timestamp: testData.data.time.iso
+                aqi: data.data.aqi,
+                pm25: (data.data.iaqi && data.data.iaqi.pm25) ? data.data.iaqi.pm25.v : 0,
+                pm10: (data.data.iaqi && data.data.iaqi.pm10) ? data.data.iaqi.pm10.v : 0,
+                timestamp: data.data.time.iso
               };
+              waqiDataFound = true;
               break;
             }
           } catch (locErr) {
@@ -95,7 +93,7 @@ app.post('/api/aqi', async (req, res) => {
         }
         
         if (!waqiDataFound) {
-          errors.push('WAQI: No stations found for Goa region');
+          errors.push('WAQI: No active stations found for Goa region');
         }
       } catch (error) {
         errors.push('WAQI: ' + error.message);
@@ -150,7 +148,7 @@ app.post('/api/aqi', async (req, res) => {
   }
 });
 
-app.post('/api/alert', async (req, res) => {
+app.post('/api/alert', async function(req, res) {
   try {
     const studentId = req.body.studentId;
     const alertType = req.body.alertType;
