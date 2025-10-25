@@ -11,6 +11,60 @@ app.use(cors({
 
 app.use(express.json());
 
+// === Alert Generator for Purple Shades START ===
+function generateAlertMessage(shade, aqi) {
+  const alerts = {
+    purpleMIND: [
+      "Keep indoor play calm; Monitor irritability.",
+      "Avoid loud/exhaust areas; Maintain hydration.",
+      "Use air purifier; reduce sensory triggers.",
+      "Strict indoor rest; pollution mask indoors."
+    ],
+    purpleVISION: [
+      "Use tactile markers indoors; avoid dusty spaces.",
+      "Increase indoor lighting and airflow.",
+      "Stay indoors, keep environment ventilated.",
+      "Full indoor restriction; ensure caregiver supervision."
+    ],
+    purpleHEAR: [
+      "Encourage mask use outdoors.",
+      "Limit outdoor group activities.",
+      "Indoor-only communication; stay hydrated.",
+      "Alert teachers/caregivers of indoor isolation."
+    ],
+    purpleVOICE: [
+      "Avoid shouting or exertion.",
+      "Keep water nearby; avoid dusty air.",
+      "No outdoor communication tasks.",
+      "Only communicate indoors; use humidifiers if available."
+    ],
+    purpleID: [
+      "Gentle reminders to avoid running outside.",
+      "Continuous supervision advised; indoor games.",
+      "Strict indoor hours; ensure cool environment.",
+      "Indoor-only with hydration; rest frequently."
+    ],
+    purpleLD: [
+      "Short outdoor exposure only.",
+      "Prefer classroom-based activities.",
+      "Limit movement between rooms.",
+      "Stay in one room with clean air filtration."
+    ],
+    purplePHYSICAL: [
+      "Stay hydrated; monitor for fatigue.",
+      "Avoid prolonged wheelchair use outside.",
+      "Indoors, stretch and relax limbs periodically.",
+      "Full indoor rest; maintain temperature control."
+    ]
+  };
+
+  if (aqi <= 200) return alerts[shade][0];
+  if (aqi <= 300) return alerts[shade][1];
+  if (aqi <= 400) return alerts[shade][2];
+  return alerts[shade][3];
+}
+// === Alert Generator for Purple Shades END ===
+
 let cache = {
   data: null,
   timestamp: null,
@@ -166,18 +220,31 @@ if (iqairData || waqiData || cpcbData) {
   }
 });
 
-app.post('/api/alert', async function(req, res) {
+/*
+ This section triggers disability-specific alerts
+ based on AQI and Purple Shade categories
+*/
+
+// === ALERT GENERATION ROUTE (Purple Shade + AQI Dynamic Messaging) ===
+app.post('/api/alert', async function (req, res) {
   try {
-    const studentId = req.body.studentId;
-    const alertType = req.body.alertType;
-    const message = req.body.message;
-    const contact = req.body.contact;
-    
-    console.log('Alert triggered:', { studentId: studentId, alertType: alertType, message: message, contact: contact });
-    
+    const { studentId, alertType, aqi, shade } = req.body;
+
+    // Generate the alert message dynamically
+    const message = generateAlertMessage(shade, aqi);
+
+    console.log('ALERT TRIGGERED:', {
+      studentId: studentId,
+      shade: shade,
+      aqi: aqi,
+      suggested_action: message
+    });
+
     res.json({
       success: true,
-      message: 'Alert logged (integration pending)'
+      shade: shade,
+      aqi_level: aqi,
+      message: message
     });
   } catch (error) {
     res.status(500).json({
@@ -192,5 +259,6 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, function() {
   console.log('Server running on port ' + PORT);
 });
+
 
 
