@@ -100,15 +100,32 @@ app.post('/api/aqi', async function(req, res) {
       }
     }
 
-    if (iqairData || waqiData) {
-      let avgAqi;
-      if (iqairData && waqiData) {
-        avgAqi = Math.round((iqairData.aqi + waqiData.aqi) / 2);
-      } else if (iqairData) {
-        avgAqi = iqairData.aqi;
-      } else {
-        avgAqi = waqiData.aqi;
-      }
+// === BEGIN CPCB PROTOTYPE MOCK ===
+let cpcbData = null;
+try {
+  // Temporary mock CPCB dataset — you can randomize for demonstrations
+  cpcbData = {
+    station: 'Goa Pollution Control Board (Mock)',
+    aqi: Math.floor(Math.random() * 150) + 60,   // random AQI range 60–210
+    pm25: Math.floor(Math.random() * 80) + 20,   // random PM2.5 20–100
+    pm10: Math.floor(Math.random() * 120) + 40,  // random PM10 40–160
+    timestamp: new Date().toISOString()
+  };
+} catch (mockErr) {
+  errors.push('CPCB Mock: ' + mockErr.message);
+}
+// === END CPCB PROTOTYPE MOCK ===
+    
+if (iqairData || waqiData || cpcbData) {
+  let allAqis = [];
+
+  if (iqairData) allAqis.push(iqairData.aqi);
+  if (waqiData) allAqis.push(waqiData.aqi);
+  if (cpcbData) allAqis.push(cpcbData.aqi);
+
+  let avgAqi = allAqis.length > 0
+    ? Math.round(allAqis.reduce((a, b) => a + b, 0) / allAqis.length)
+    : 0;
 
       const result = {
         location: 'Panaji, Goa',
@@ -117,8 +134,9 @@ app.post('/api/aqi', async function(req, res) {
         pm10: (waqiData && waqiData.pm10) || 0,
         timestamp: new Date().toISOString(),
         sources: {
-          iqair: iqairData ? iqairData.aqi : 'N/A',
-          cpcb: waqiData ? waqiData.aqi : 'N/A'
+            iqair: iqairData ? iqairData.aqi : 'N/A',
+            waqi: waqiData ? waqiData.aqi : 'N/A',
+            cpcb: cpcbData ? cpcbData.aqi : 'N/A' 
         },
         errors: errors.length > 0 ? errors : null
       };
@@ -174,3 +192,4 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, function() {
   console.log('Server running on port ' + PORT);
 });
+
