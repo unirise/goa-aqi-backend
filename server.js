@@ -69,18 +69,33 @@ app.post('/api/aqi', async (req, res) => {
 
     if (waqiToken) {
       try {
-        const response = await fetch('https://api.waqi.info/feed/goa/?token=' + waqiToken);
-        const data = await response.json();
-
-        if (response.ok && data.status === 'ok' && data.data) {
-          waqiData = {
-            aqi: data.data.aqi,
-            pm25: (data.data.iaqi && data.data.iaqi.pm25) ? data.data.iaqi.pm25.v : 0,
-            pm10: (data.data.iaqi && data.data.iaqi.pm10) ? data.data.iaqi.pm10.v : 0,
-            timestamp: data.data.time.iso
-          };
-        } else {
-          errors.push('WAQI: ' + (data.data || 'Failed to fetch'));
+        // Try multiple locations for Goa
+        const locations = ['panaji', 'margao', 'goa', 'india/goa/panaji'];
+        let waqiResponse = null;
+        let waqiDataFound = false;
+        
+        for (const loc of locations) {
+          try {
+            waqiResponse = await fetch('https://api.waqi.info/feed/' + loc + '/?token=' + waqiToken);
+            const testData = await waqiResponse.json();
+            
+            if (testData.status === 'ok' && testData.data && testData.data.aqi) {
+              waqiDataFound = true;
+              waqiData = {
+                aqi: testData.data.aqi,
+                pm25: (testData.data.iaqi && testData.data.iaqi.pm25) ? testData.data.iaqi.pm25.v : 0,
+                pm10: (testData.data.iaqi && testData.data.iaqi.pm10) ? testData.data.iaqi.pm10.v : 0,
+                timestamp: testData.data.time.iso
+              };
+              break;
+            }
+          } catch (locErr) {
+            continue;
+          }
+        }
+        
+        if (!waqiDataFound) {
+          errors.push('WAQI: No stations found for Goa region');
         }
       } catch (error) {
         errors.push('WAQI: ' + error.message);
