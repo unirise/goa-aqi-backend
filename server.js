@@ -15,6 +15,18 @@ app.use(express.json());
 const LAT = 15.4909;
 const LON = 73.8278;
 
+// Only accept stations within this distance of Panaji (covers all of Goa)
+const MAX_STATION_DISTANCE_KM = 80;
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+  const toRad = function (d) { return d * Math.PI / 180; };
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // === Alert messages for each purple shade (4 levels of AQI) ===
 const shadeAlerts = {
   purpleMIND: [
@@ -80,7 +92,7 @@ app.get('/', function (req, res) {
   res.json({
     status: 'ok',
     message: 'Goa AQI API Server Running',
-    version: '1.1.0'
+    version: '1.2.0'
   });
 });
 
@@ -127,12 +139,18 @@ app.post('/api/aqi', async function (req, res) {
         );
         const data = await response.json();
 
-        if (data.status === 'ok' && data.data && typeof data.data.aqi === 'number') {
+        const geo = (data.data && data.data.city && data.data.city.geo) || null;
+        const stationName = (data.data && data.data.city && data.data.city.name) || 'Unknown station';
+        const km = geo ? distanceKm(LAT, LON, Number(geo[0]), Number(geo[1])) : Infinity;
+
+        if (data.status === 'ok' && data.data && km > MAX_STATION_DISTANCE_KM) {
+          errors.push('WAQI: nearest station is ' + stationName + ' (' + Math.round(km) + ' km away) - not used');
+        } else if (data.status === 'ok' && data.data && typeof data.data.aqi === 'number') {
           waqiData = {
             aqi: data.data.aqi,
             pm25: (data.data.iaqi && data.data.iaqi.pm25) ? data.data.iaqi.pm25.v : 0,
             pm10: (data.data.iaqi && data.data.iaqi.pm10) ? data.data.iaqi.pm10.v : 0,
-            station: data.data.city ? data.data.city.name : 'Unknown station'
+            station: stationName
           };
         } else {
           errors.push('WAQI: ' + (data.data || 'No data returned'));
