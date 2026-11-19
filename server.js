@@ -183,28 +183,39 @@ async function fetchOpenMeteo(place) {
   };
 }
 
-// One remembered answer per area, for 10 minutes
+// A short, plain reason for a missing IQAir figure
+function iqairReason(msg) {
+  const m = String(msg).toLowerCase();
+  if (m.indexOf('per_minute') !== -1 || m.indexOf('too_many') !== -1) return 'busy, try again in a minute';
+  if (m.indexOf('day') !== -1) return 'daily limit reached, back tomorrow';
+  if (m.indexOf('month') !== -1) return 'monthly limit reached';
+  if (m.indexOf('forbidden') !== -1 || m.indexOf('key') !== -1) return 'key not accepted, check Configure API Keys';
+  if (m.indexOf('station') !== -1 || m.indexOf('city') !== -1) return 'no city with data nearby';
+  return 'not available right now';
+}
+
+// One remembered answer per area, for 10 minutes (1 minute if a source was missing)
 const CACHE_TTL = 10 * 60 * 1000;
 const CACHE_MAX = 500;
 const cache = new Map();
 
 function cacheGet(key) {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.data;
+  if (hit && Date.now() - hit.at < (hit.ttl || CACHE_TTL)) return hit.data;
   if (hit) cache.delete(key);
   return null;
 }
 
-function cacheSet(key, data) {
+function cacheSet(key, data, ttl) {
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
-  cache.set(key, { at: Date.now(), data: data });
+  cache.set(key, { at: Date.now(), data: data, ttl: ttl || CACHE_TTL });
 }
 
 app.get('/', function (req, res) {
   res.json({
     status: 'ok',
     message: 'Saaf Saans API Server Running',
-    version: '1.4.0'
+    version: '1.4.1'
   });
 });
 
@@ -222,6 +233,8 @@ app.post('/api/aqi', async function (req, res) {
     }
 
     let iqairData = null;
+    let iqairNote = iqairKey ? null : 'no key entered';
+    let shortCache = false;
     let waqiData = null;
     let omData = null;
     const errors = [];
@@ -231,6 +244,7 @@ app.post('/api/aqi', async function (req, res) {
       omData = await fetchOpenMeteo(place);
     } catch (error) {
       errors.push('Open-Meteo: ' + error.message);
+      shortCache = true;
     }
 
     // --- IQAir: nearest city with data (US scale) ---
@@ -247,10 +261,15 @@ app.post('/api/aqi', async function (req, res) {
             country: data.data.country || null
           };
         } else {
-          errors.push('IQAir: ' + ((data.data && data.data.message) || 'Failed to fetch'));
+          const msg = (data.data && data.data.message) || 'Failed to fetch';
+          errors.push('IQAir: ' + msg);
+          iqairNote = iqairReason(msg);
+          shortCache = true;
         }
       } catch (error) {
         errors.push('IQAir: ' + error.message);
+        iqairNote = 'not reachable, try again in a minute';
+        shortCache = true;
       }
     }
 
@@ -328,6 +347,7 @@ app.post('/api/aqi', async function (req, res) {
         openmeteo: omData && scale.indexOf('modelled') !== -1 ? headline : 'N/A',
         iqair: iqairData ? iqairData.aqi : 'N/A',
         iqair_city: iqairData ? iqairData.city : null,
+        iqair_note: iqairData ? null : iqairNote,
         station: waqiData ? waqiData.aqi : 'N/A',
         station_name: waqiData ? waqiData.station : null,
         station_km: waqiData ? waqiData.km : null,
@@ -338,7 +358,8 @@ app.post('/api/aqi', async function (req, res) {
       errors: errors.length > 0 ? errors : null
     };
 
-    cacheSet(cacheKey, result);
+    // A missing source may be a passing problem (such as IQAir's per-minute limit): keep that answer for 1 minute only
+    cacheSet(cacheKey, result, shortCache ? 60 * 1000 : CACHE_TTL);
     res.json({ success: true, data: result, cached: false });
   } catch (error) {
     console.error('Server error:', error);
