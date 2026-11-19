@@ -82,6 +82,82 @@ function generateAlertMessage(shade, aqi) {
   return list[3];
 }
 
+// === India National AQI (CPCB), indicative, from PM2.5 and PM10 ===
+// Breakpoints: [conc_low, conc_high, index_low, index_high] in ug/m3 (24-hour)
+const NAQI_BP = {
+  pm2_5: [[0, 30, 0, 50], [31, 60, 51, 100], [61, 90, 101, 200], [91, 120, 201, 300], [121, 250, 301, 400], [251, 500, 401, 500]],
+  pm10: [[0, 50, 0, 50], [51, 100, 51, 100], [101, 250, 101, 200], [251, 350, 201, 300], [351, 430, 301, 400], [431, 800, 401, 500]]
+};
+const NAQI_BANDS = [[50, 'Good'], [100, 'Satisfactory'], [200, 'Moderately polluted'], [300, 'Poor'], [400, 'Very poor'], [500, 'Severe']];
+
+function naqiSubIndex(pollutant, conc) {
+  if (typeof conc !== 'number' || isNaN(conc) || conc < 0) return null;
+  const c = Math.round(conc);
+  const table = NAQI_BP[pollutant];
+  for (let i = 0; i < table.length; i++) {
+    const bp = table[i];
+    if (c <= bp[1]) {
+      return Math.round((bp[3] - bp[2]) / (bp[1] - bp[0]) * (c - bp[0]) + bp[2]);
+    }
+  }
+  return 500;
+}
+
+function naqiBand(index) {
+  for (let i = 0; i < NAQI_BANDS.length; i++) {
+    if (index <= NAQI_BANDS[i][0]) return NAQI_BANDS[i][1];
+  }
+  return 'Severe';
+}
+
+function average(values) {
+  const v = values.filter(function (x) { return typeof x === 'number' && !isNaN(x); });
+  if (v.length === 0) return null;
+  return v.reduce(function (a, b) { return a + b; }, 0) / v.length;
+}
+
+// Open-Meteo: modelled PM2.5/PM10 (Copernicus CAMS); free for non-commercial use, no key
+async function fetchOpenMeteo() {
+  const url = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + LAT + '&longitude=' + LON +
+    '&current=pm2_5,pm10,us_aqi&hourly=pm2_5,pm10&past_days=1&forecast_days=1&timezone=Asia%2FKolkata';
+  const response = await fetch(url);
+  const data = await response.json();
+  if (!response.ok || data.error || !data.current) {
+    throw new Error((data && data.reason) || 'No data returned');
+  }
+  const now = data.current.time;
+  let pm25_24h = null, pm10_24h = null, hours = 0;
+  if (data.hourly && Array.isArray(data.hourly.time)) {
+    const idx = [];
+    for (let i = 0; i < data.hourly.time.length; i++) {
+      if (data.hourly.time[i] <= now) idx.push(i);
+    }
+    const last24 = idx.slice(-24);
+    const pm25s = last24.map(function (i) { return data.hourly.pm2_5[i]; });
+    const pm10s = last24.map(function (i) { return data.hourly.pm10[i]; });
+    hours = pm25s.filter(function (x) { return typeof x === 'number'; }).length;
+    pm25_24h = average(pm25s);
+    pm10_24h = average(pm10s);
+  }
+  // Use the 24-hour average when at least 18 hours are available; otherwise the latest hour
+  const use24 = hours >= 18 && pm25_24h !== null && pm10_24h !== null;
+  const pm25 = use24 ? pm25_24h : data.current.pm2_5;
+  const pm10 = use24 ? pm10_24h : data.current.pm10;
+  const sub25 = naqiSubIndex('pm2_5', pm25);
+  const sub10 = naqiSubIndex('pm10', pm10);
+  if (sub25 === null && sub10 === null) throw new Error('No PM2.5 or PM10 values');
+  const naqi = Math.max(sub25 === null ? 0 : sub25, sub10 === null ? 0 : sub10);
+  return {
+    naqi: naqi,
+    band: naqiBand(naqi),
+    basis: use24 ? '24-hour average' : 'latest hour only',
+    pm25_now: data.current.pm2_5,
+    pm10_now: data.current.pm10,
+    us_aqi: data.current.us_aqi,
+    time: now
+  };
+}
+
 let cache = {
   data: null,
   timestamp: null,
@@ -92,7 +168,7 @@ app.get('/', function (req, res) {
   res.json({
     status: 'ok',
     message: 'Goa AQI API Server Running',
-    version: '1.2.0'
+    version: '1.3.0'
   });
 });
 
@@ -107,7 +183,15 @@ app.post('/api/aqi', async function (req, res) {
 
     let iqairData = null;
     let waqiData = null;
+    let omData = null;
     const errors = [];
+
+    // --- Open-Meteo: modelled PM2.5/PM10 for Panaji; indicative India National AQI ---
+    try {
+      omData = await fetchOpenMeteo();
+    } catch (error) {
+      errors.push('Open-Meteo: ' + error.message);
+    }
 
     // --- IQAir: nearest monitoring point to Panaji ---
     if (iqairKey) {
@@ -148,9 +232,8 @@ app.post('/api/aqi', async function (req, res) {
         } else if (data.status === 'ok' && data.data && typeof data.data.aqi === 'number') {
           waqiData = {
             aqi: data.data.aqi,
-            pm25: (data.data.iaqi && data.data.iaqi.pm25) ? data.data.iaqi.pm25.v : 0,
-            pm10: (data.data.iaqi && data.data.iaqi.pm10) ? data.data.iaqi.pm10.v : 0,
-            station: stationName
+            station: stationName,
+            km: Math.round(km)
           };
         } else {
           errors.push('WAQI: ' + (data.data || 'No data returned'));
@@ -160,7 +243,7 @@ app.post('/api/aqi', async function (req, res) {
       }
     }
 
-    if (!iqairData && !waqiData) {
+    if (!omData && !iqairData && !waqiData) {
       return res.status(400).json({
         success: false,
         error: 'Failed to fetch data from any source',
@@ -168,21 +251,35 @@ app.post('/api/aqi', async function (req, res) {
       });
     }
 
-    const readings = [];
-    if (iqairData) readings.push(iqairData.aqi);
-    if (waqiData) readings.push(waqiData.aqi);
-    const avgAqi = Math.round(readings.reduce(function (a, b) { return a + b; }, 0) / readings.length);
+    // Headline: India National AQI (indicative) from Open-Meteo when available.
+    // IQAir and WAQI use the US scale, so they are never averaged with it; they are shown separately.
+    let headline, scale;
+    if (omData) {
+      headline = omData.naqi;
+      scale = 'India NAQI (indicative, modelled)';
+    } else if (iqairData) {
+      headline = iqairData.aqi;
+      scale = 'US AQI (IQAir)';
+    } else {
+      headline = waqiData.aqi;
+      scale = 'US AQI (WAQI station)';
+    }
 
     const result = {
       location: 'Panaji, Goa',
-      aqi: avgAqi,
-      pm25: (iqairData && iqairData.pm25) || (waqiData && waqiData.pm25) || 0,
-      pm10: (waqiData && waqiData.pm10) || 0,
+      aqi: headline,
+      aqi_scale: scale,
+      band: omData ? omData.band : null,
+      pm25: omData && typeof omData.pm25_now === 'number' ? Math.round(omData.pm25_now * 10) / 10 : 0,
+      pm10: omData && typeof omData.pm10_now === 'number' ? Math.round(omData.pm10_now * 10) / 10 : 0,
       timestamp: new Date().toISOString(),
       sources: {
+        openmeteo: omData ? omData.naqi : 'N/A',
         iqair: iqairData ? iqairData.aqi : 'N/A',
         cpcb: waqiData ? waqiData.aqi : 'N/A'
       },
+      openmeteo: omData ? { basis: omData.basis, us_aqi: omData.us_aqi, data_time: omData.time,
+        attribution: 'Open-Meteo, using Copernicus Atmosphere Monitoring Service (CAMS) data' } : null,
       station: waqiData ? waqiData.station : null,
       errors: errors.length > 0 ? errors : null
     };
